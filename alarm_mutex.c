@@ -145,6 +145,7 @@ void * display_thread(void * args){
                         free(oldref);
                         display->alarm_list = NULL;
                     }
+                    continue;
                 }
 
                 // If the current time has finally reached the print time,
@@ -250,6 +251,7 @@ void *alarm_thread (void *arg)
         //Send to display one
         if((alarm->time % 2) == 0) {
             display_flag = DISPLAY_TWO;
+            display_flag = 1;
             appendToList(&(display_two->alarm_list), alarm);
             display_two->latest_request = alarm;
             printf("Passed Alarm to display 2\n");
