@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include <time.h>
 #include "errors.h"
+#include <stdio.h>
 
 
 #define DISPLAY_ONE 1
@@ -28,7 +29,7 @@
 typedef struct alarm_tag {
     struct alarm_tag    *link;
     int                 seconds;
-    time_t              time;   /* seconds from EPOCH */
+    struct timespec     time;   /* seconds from EPOCH */
     char                message[64];
 } alarm_t;
 
@@ -68,7 +69,7 @@ void appendToList(alarm_t ** base_list, alarm_t * new_item){
 
     while (*base_list != NULL) {
         //If before another item, append.
-        if (new_item->time <= old->time) {
+        if (new_item->time.tv_sec <= old->time.tv_sec) {
             new_item->link = old;
 
             *base_list = new_item;
@@ -92,7 +93,8 @@ void appendToList(alarm_t ** base_list, alarm_t * new_item){
 void * display_thread(void * args){
 
     //Variables to print the current and time interval
-    time_t now, print_time;
+    //time_t now, print_time;
+    time_t print_time;
     //flag for whether the print_time variable has been reset
     int print_flag = 0;
 
@@ -100,6 +102,10 @@ void * display_thread(void * args){
     alarm_t * oldref;
     //the display struct.
     disp_t * display = (disp_t *) args;
+    //Structure to acquire current time with nanosec precision
+    struct timespec now;
+    //Double precision floating point for time comparisons
+    double time_nsec, alarm_time;
 
 
 
@@ -116,23 +122,39 @@ void * display_thread(void * args){
             if(display->alarm_list != NULL){
 
                 //Calculate the current time in seconds.
-                now = time(NULL);
+                //`now = time(NULL);
+		clock_gettime(CLOCK_REALTIME, &now);
+		time_nsec = ((double)now.tv_nsec) * 1e-9 + (double)now.tv_sec;
 
                 //Print flag is set in case we break out of the loop, then we know to
                 //re-set the time interval
                 if(print_flag == 0){
-                    print_time = now + PRINT_INTERVAL;
+		    flockfile(stdout);
+                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time: alarm request:%s\n",
+                           display->thread_num, display->alarm_list->time.tv_sec - now.tv_sec
+                            , display->alarm_list->message);
+		    printf("alarm>");
+		    fflush(stdout);
+		    funlockfile(stdout);
+		    //Set the print time, rounding to seconds is okay
+                    print_time = now.tv_sec + PRINT_INTERVAL;
+		    //Set the precise alarm time.
+		    alarm_time = (double)display->alarm_list->time.tv_nsec*1e-9 + display->alarm_list->time.tv_sec;
                     print_flag = 1;
                     continue;
                 }
 
                 //If the current time is greater than or equal to the target time
                 //Print and free.
-                //TODO: Re-calibrate to nanoseconds for more accuracy. We have to use nano for selecting the display anyway
-                if(now >= display->alarm_list->time){
+                if(time_nsec >= alarm_time){
                     //Print alarm done and a newline for the user to display alarm
                     //NOTE: Currently broken. For some reason alarm> prints in the line above alarm done
-                    printf("\nAlarm done: %s\nalarm>", display->alarm_list->message);
+		    flockfile(stdout);
+		    printf("\nDisplay Thread  %d: Alarm expired at %d: %s\n", display->thread_num,
+				    display->alarm_list->time.tv_sec, display->alarm_list->message);
+		    printf("alarm>");
+		    fflush(stdout);
+		    funlockfile(stdout);
                     oldref = display->alarm_list;
 
                     //If there is a next item in the list, free the old reference and move to that one.
@@ -145,19 +167,25 @@ void * display_thread(void * args){
                         free(oldref);
                         display->alarm_list = NULL;
                     }
+		    print_flag = 0;
                     continue;
                 }
 
                 // If the current time has finally reached the print time,
                 // Print. Note: Should be error checked.
                 // now should never actually excede print_time.
-                if(now >= print_time){
+                if(now.tv_sec >= print_time){
 
-                    print_time = now + PRINT_INTERVAL;
+                    print_time = now.tv_sec + PRINT_INTERVAL;
 
-                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time: alarm request:%s\nalarm>",
-                           display->thread_num, display->alarm_list->time - now
+		    flockfile(stdout);
+                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time: alarm request:%s\n",
+                           display->thread_num, display->alarm_list->time.tv_sec - now.tv_sec
                             , display->alarm_list->message);
+		    printf("alarm>");
+		    fflush(stdout);
+		    funlockfile(stdout);
+
                 }
             }
 
@@ -167,13 +195,14 @@ void * display_thread(void * args){
         //Lock the display thread to make sure the append operation to the list is atomic.
         pthread_mutex_lock(&display_mutex);
 
-        now = time(NULL);
+        //Set time
+	clock_gettime(CLOCK_REALTIME, &now);
 
         //Display the last request received.
         printf("Display thread %d: Received Alarm Request at time %ld: %s, ExpiryTime is %ld\n",
                display->thread_num,
-               now, display->latest_request->message,
-               display->latest_request->time);
+               now.tv_sec, display->latest_request->message,
+               display->latest_request->time.tv_sec);
 
 
         //Unlock the display mutex.
@@ -200,6 +229,8 @@ void *alarm_thread (void *arg)
     disp_t * display_one, * display_two;
     //The threads
     pthread_t display_thread1, display_thread2;
+    float nano_time;
+    time_t sec_time;
 
     //Set the struct for the first thread
     display_one = malloc(sizeof(disp_t));
@@ -246,10 +277,17 @@ void *alarm_thread (void *arg)
         if (status != 0)
             err_abort (status, "Lock mutex");
 
+	nano_time = (float)alarm->time.tv_nsec*1e-9;
+	sec_time = alarm->time.tv_sec;
+
+	if(nano_time >= 0.5)
+		sec_time += 1;
+	
+
 
         //If the time is even, send to display two, otherwise
         //Send to display one
-        if((alarm->time % 2) == 0) {
+        if((sec_time % 2) == 0) {
             display_flag = DISPLAY_TWO;
             appendToList(&(display_two->alarm_list), alarm);
             display_two->latest_request = alarm;
@@ -271,7 +309,7 @@ void *alarm_thread (void *arg)
 
 
 #ifdef DEBUG
-        printf ("[waiting: %d(%d)\"%s\"]\n", alarm->time,
+        printf ("[waiting: %d(%d)\"%s\"]\n", alarm->time.tv_sec,
                 sleep_time, alarm->message);
 #endif
 
@@ -335,10 +373,14 @@ int main (int argc, char *argv[])
                 err_abort (status, "Lock mutex");
 
 
-            alarm->time = time (NULL) + alarm->seconds;
+	    //Allocate the time 
+	    clock_gettime(CLOCK_REALTIME, &(alarm->time));
+
+            //alarm->time.tv_sec = time (NULL) + alarm->seconds;
+	    alarm->time.tv_sec += alarm->seconds;
             //Output message to console
             printf("Main Thread Received Alarm Request at %lld: %d seconds with message: %s\n",
-                   alarm->time - alarm-> seconds, alarm->seconds, alarm->message);
+                   alarm->time.tv_sec - alarm-> seconds, alarm->seconds, alarm->message);
 
             //Set alarm list to the current alarm. NULL the next in sequence
             alarm_list = alarm;
