@@ -19,6 +19,7 @@
 #define DISPLAY_ONE 1
 #define DISPLAY_TWO 2
 #define PRINT_INTERVAL 2
+#define DATEFORMAT_SIZE 50
 /*
  * The "alarm" structure now contains the time_t (time since the
  * Epoch, in seconds) for each alarm, so that they can be
@@ -31,6 +32,7 @@ typedef struct alarm_tag {
     int                 seconds;
     struct timespec     time;   /* seconds from EPOCH */
     char                message[64];
+    char                time_retrieved[DATEFORMAT_SIZE];
 } alarm_t;
 
 //Structure to pass onto display thread
@@ -56,6 +58,8 @@ alarm_t *alarm_list = NULL;
 volatile int display_flag = 0;
 //Alarm flag
 volatile int alarm_flag = 0;
+//Date format
+const char* date_format_string = "%Y-%m-%d %H:%M:%S";
 
 /* Appends to the list of alarms, sorted by smallest time.
  *
@@ -93,7 +97,6 @@ void appendToList(alarm_t ** base_list, alarm_t * new_item){
 void * display_thread(void * args){
 
     //Variables to print the current and time interval
-    //time_t now, print_time;
     time_t print_time;
     //flag for whether the print_time variable has been reset
     int print_flag = 0;
@@ -106,7 +109,10 @@ void * display_thread(void * args){
     struct timespec now;
     //Double precision floating point for time comparisons
     double time_nsec, alarm_time;
-
+    //Time printing struct;
+    struct tm local_time;
+    char local_time_str[DATEFORMAT_SIZE];
+    char expiration_str[DATEFORMAT_SIZE];
 
 
     while (1){
@@ -130,10 +136,12 @@ void * display_thread(void * args){
                 //re-set the time interval
                 if(print_flag == 0){
 		    flockfile(stdout);
-                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time: alarm request:%s\n",
-                           display->thread_num, display->alarm_list->time.tv_sec - now.tv_sec
-                            , display->alarm_list->message);
-		    printf("alarm>");
+                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time:%s alarm request: number of seconds: %d message: %s",
+                           display->thread_num, 
+			   display->alarm_list->time.tv_sec - now.tv_sec,
+			   display->alarm_list->time_retrieved,
+			   display->alarm_list->seconds,
+                           display->alarm_list->message);
 		    fflush(stdout);
 		    funlockfile(stdout);
 		    //Set the print time, rounding to seconds is okay
@@ -148,10 +156,15 @@ void * display_thread(void * args){
                 //Print and free.
                 if(time_nsec >= alarm_time){
                     //Print alarm done and a newline for the user to display alarm
-                    //NOTE: Currently broken. For some reason alarm> prints in the line above alarm done
+		    //Get the local time 
+		    localtime_r(&(display->alarm_list->time.tv_sec), &local_time);
+		    strftime(local_time_str, DATEFORMAT_SIZE, date_format_string, &local_time);
+
 		    flockfile(stdout);
-		    printf("\nDisplay Thread  %d: Alarm expired at %d: %s\n", display->thread_num,
-				    display->alarm_list->time.tv_sec, display->alarm_list->message);
+		    printf("\nDisplay Thread  %d: Alarm expired at %s: %s\n", 
+				    display->thread_num,
+				    local_time_str, 
+				    display->alarm_list->message);
 		    printf("alarm>");
 		    fflush(stdout);
 		    funlockfile(stdout);
@@ -179,10 +192,12 @@ void * display_thread(void * args){
                     print_time = now.tv_sec + PRINT_INTERVAL;
 
 		    flockfile(stdout);
-                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time: alarm request:%s\n",
-                           display->thread_num, display->alarm_list->time.tv_sec - now.tv_sec
-                            , display->alarm_list->message);
-		    printf("alarm>");
+                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time:%s alarm request: number of seconds: %d message: %s",
+                           display->thread_num, 
+			   display->alarm_list->time.tv_sec - now.tv_sec,
+			   display->alarm_list->time_retrieved,
+			   display->alarm_list->seconds,
+                           display->alarm_list->message);
 		    fflush(stdout);
 		    funlockfile(stdout);
 
@@ -197,12 +212,22 @@ void * display_thread(void * args){
 
         //Set time
 	clock_gettime(CLOCK_REALTIME, &now);
+	
+	//Get the time the request was received
+    	localtime_r(&(now.tv_sec),&local_time);
+    	strftime(display->latest_request->time_retrieved,DATEFORMAT_SIZE,date_format_string,&local_time);
+
+	//Get time alarm expires
+	localtime_r(&(display->alarm_list->time.tv_sec), &local_time);
+	strftime(expiration_str, DATEFORMAT_SIZE,date_format_string, &local_time);
 
         //Display the last request received.
-        printf("Display thread %d: Received Alarm Request at time %ld: %s, ExpiryTime is %ld\n",
+        printf("Display thread %d: Received Alarm Request at time %s: number of seconds: %d message: %s, ExpiryTime is %s\n",
                display->thread_num,
-               now.tv_sec, display->latest_request->message,
-               display->latest_request->time.tv_sec);
+               display->latest_request->time_retrieved, 
+	       display->latest_request->seconds,
+	       display->latest_request->message,
+               expiration_str);
 
 
         //Unlock the display mutex.
@@ -229,8 +254,13 @@ void *alarm_thread (void *arg)
     disp_t * display_one, * display_two;
     //The threads
     pthread_t display_thread1, display_thread2;
+    //Precision time checks.
     float nano_time;
     time_t sec_time;
+    //String format time
+    struct tm alarm_local_time;
+    char alarm_local_str[DATEFORMAT_SIZE];
+
 
     //Set the struct for the first thread
     display_one = malloc(sizeof(disp_t));
@@ -282,6 +312,11 @@ void *alarm_thread (void *arg)
 
 	if(nano_time >= 0.5)
 		sec_time += 1;
+
+
+	//Get the current time
+    	localtime_r(&(alarm->time.tv_sec),&alarm_local_time);
+    	strftime(alarm_local_str,DATEFORMAT_SIZE,date_format_string,&alarm_local_time);
 	
 
 
@@ -291,13 +326,21 @@ void *alarm_thread (void *arg)
             display_flag = DISPLAY_TWO;
             appendToList(&(display_two->alarm_list), alarm);
             display_two->latest_request = alarm;
-            printf("Passed Alarm to display 2\n");
+            printf("Alarm Thread passed Alarm Request to Display Thread %d at %s: number of seconds: %d message: %s\n",
+			    DISPLAY_TWO,
+			    alarm_local_str, 
+			    alarm->seconds,
+			    alarm->message);
         }
         else {
             display_flag = DISPLAY_ONE;
             appendToList(&(display_one->alarm_list), alarm);
             display_one->latest_request = alarm;
-            printf("Passed Alarm to display 1\n");
+            printf("Alarm Thread passed Alarm Request to Display Thread %d at %s: number of seconds: %d message: %s\n",
+			    DISPLAY_ONE,
+			    alarm_local_str, 
+			    alarm->seconds,
+			    alarm->message);
         }
         //Get rid of the reference.
         alarm_list = NULL;
@@ -327,6 +370,8 @@ int main (int argc, char *argv[])
     char line[128];
     alarm_t *alarm, **last, *next;
     pthread_t thread;
+    struct tm main_local_time;
+    char main_local_str[DATEFORMAT_SIZE];
 
 
     //Create the alarm thread;
@@ -375,12 +420,15 @@ int main (int argc, char *argv[])
 
 	    //Allocate the time 
 	    clock_gettime(CLOCK_REALTIME, &(alarm->time));
-
-            //alarm->time.tv_sec = time (NULL) + alarm->seconds;
+	    //Set alarm time
 	    alarm->time.tv_sec += alarm->seconds;
+	    //get the local time string
+	    localtime_r(&(alarm->time.tv_sec),&main_local_time);
+	    strftime(main_local_str,DATEFORMAT_SIZE,date_format_string,&main_local_time);
+
             //Output message to console
-            printf("Main Thread Received Alarm Request at %lld: %d seconds with message: %s\n",
-                   alarm->time.tv_sec - alarm-> seconds, alarm->seconds, alarm->message);
+            printf("Main Thread Received Alarm Request at %s: %d seconds with message: %s\n",
+                   main_local_str, alarm->seconds, alarm->message);
 
             //Set alarm list to the current alarm. NULL the next in sequence
             alarm_list = alarm;
