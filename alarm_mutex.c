@@ -136,7 +136,7 @@ void * display_thread(void * args){
                 //re-set the time interval
                 if(print_flag == 0){
 		    flockfile(stdout);
-                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time:%s alarm request: number of seconds: %d message: %s",
+                    printf("Display thread %d: Number of SecondsLeft %d: Time:%s alarm request: number of seconds: %d message: %s\n",
                            display->thread_num, 
 			   display->alarm_list->time.tv_sec - now.tv_sec,
 			   display->alarm_list->time_retrieved,
@@ -351,11 +351,6 @@ void *alarm_thread (void *arg)
             err_abort (status, "Unlock display mutex");
 
 
-#ifdef DEBUG
-        printf ("[waiting: %d(%d)\"%s\"]\n", alarm->time.tv_sec,
-                sleep_time, alarm->message);
-#endif
-
         //Unlock the main thread after the transaction.
         status = pthread_mutex_unlock (&alarm_mutex);
         if (status != 0)
@@ -426,9 +421,12 @@ int main (int argc, char *argv[])
 	    localtime_r(&(alarm->time.tv_sec),&main_local_time);
 	    strftime(main_local_str,DATEFORMAT_SIZE,date_format_string,&main_local_time);
 
+            flockfile(stdout);
             //Output message to console
             printf("Main Thread Received Alarm Request at %s: %d seconds with message: %s\n",
                    main_local_str, alarm->seconds, alarm->message);
+            fflush(stdout);
+            funlockfile(stdout);
 
             //Set alarm list to the current alarm. NULL the next in sequence
             alarm_list = alarm;

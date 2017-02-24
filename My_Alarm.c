@@ -110,7 +110,7 @@ void * display_thread(void * args){
     //Double precision floating point for time comparisons
     double time_nsec, alarm_time;
     //Time printing struct;
-    struct tm local_time;
+    struct tm local_time, * err_check;
     char local_time_str[DATEFORMAT_SIZE];
     char expiration_str[DATEFORMAT_SIZE];
 
@@ -128,26 +128,25 @@ void * display_thread(void * args){
             if(display->alarm_list != NULL){
 
                 //Calculate the current time in seconds.
-                //`now = time(NULL);
-		clock_gettime(CLOCK_REALTIME, &now);
-		time_nsec = ((double)now.tv_nsec) * 1e-9 + (double)now.tv_sec;
+                clock_gettime(CLOCK_REALTIME, &now);
+                time_nsec = ((double)now.tv_nsec) * 1e-9 + (double)now.tv_sec;
 
                 //Print flag is set in case we break out of the loop, then we know to
                 //re-set the time interval
                 if(print_flag == 0){
-		    flockfile(stdout);
-                    printf("\nDisplay thread %d: Number of SecondsLeft %d: Time:%s alarm request: number of seconds: %d message: %s",
-                           display->thread_num, 
-			   display->alarm_list->time.tv_sec - now.tv_sec,
-			   display->alarm_list->time_retrieved,
-			   display->alarm_list->seconds,
+                    flockfile(stdout);
+                    printf("Display thread %d: Number of SecondsLeft %d: Time:%s alarm request: number of seconds: %d message: %s\n",
+                           display->thread_num,
+                           display->alarm_list->time.tv_sec - now.tv_sec,
+                           display->alarm_list->time_retrieved,
+                           display->alarm_list->seconds,
                            display->alarm_list->message);
-		    fflush(stdout);
-		    funlockfile(stdout);
-		    //Set the print time, rounding to seconds is okay
+                    fflush(stdout);
+                    funlockfile(stdout);
+                    //Set the print time, rounding to seconds is okay
                     print_time = now.tv_sec + PRINT_INTERVAL;
-		    //Set the precise alarm time.
-		    alarm_time = (double)display->alarm_list->time.tv_nsec*1e-9 + display->alarm_list->time.tv_sec;
+                    //Set the precise alarm time.
+                    alarm_time = (double)display->alarm_list->time.tv_nsec*1e-9 + display->alarm_list->time.tv_sec;
                     print_flag = 1;
                     continue;
                 }
@@ -156,18 +155,21 @@ void * display_thread(void * args){
                 //Print and free.
                 if(time_nsec >= alarm_time){
                     //Print alarm done and a newline for the user to display alarm
-		    //Get the local time 
-		    localtime_r(&(display->alarm_list->time.tv_sec), &local_time);
-		    strftime(local_time_str, DATEFORMAT_SIZE, date_format_string, &local_time);
+                    //Get the local time
+                    err_check = localtime_r(&(display->alarm_list->time.tv_sec), &local_time);
+                    if(err_check == NULL)
+                        fprintf(stderr, "Error Acquiring local time\n");
 
-		    flockfile(stdout);
-		    printf("\nDisplay Thread  %d: Alarm expired at %s: %s\n", 
-				    display->thread_num,
-				    local_time_str, 
-				    display->alarm_list->message);
-		    printf("alarm>");
-		    fflush(stdout);
-		    funlockfile(stdout);
+                    strftime(local_time_str, DATEFORMAT_SIZE, date_format_string, &local_time);
+
+                    flockfile(stdout);
+                    printf("\nDisplay Thread  %d: Alarm expired at %s: %s\n",
+                           display->thread_num,
+                           local_time_str,
+                           display->alarm_list->message);
+                    printf("alarm>");
+                    fflush(stdout);
+                    funlockfile(stdout);
                     oldref = display->alarm_list;
 
                     //If there is a next item in the list, free the old reference and move to that one.
@@ -175,12 +177,13 @@ void * display_thread(void * args){
                         display->alarm_list = (display->alarm_list)->link;
                         free(oldref);
                     }
-                    //Otherwise, just free the reference and null.
+                        //Otherwise, just free the reference and null.
                     else {
                         free(oldref);
                         display->alarm_list = NULL;
                     }
-		    print_flag = 0;
+                    //Set print flag to 0 to acquire new print interval
+                    print_flag = 0;
                     continue;
                 }
 
@@ -191,15 +194,15 @@ void * display_thread(void * args){
 
                     print_time = now.tv_sec + PRINT_INTERVAL;
 
-		    flockfile(stdout);
+                    flockfile(stdout);
                     printf("\nDisplay thread %d: Number of SecondsLeft %d: Time:%s alarm request: number of seconds: %d message: %s",
-                           display->thread_num, 
-			   display->alarm_list->time.tv_sec - now.tv_sec,
-			   display->alarm_list->time_retrieved,
-			   display->alarm_list->seconds,
+                           display->thread_num,
+                           display->alarm_list->time.tv_sec - now.tv_sec,
+                           display->alarm_list->time_retrieved,
+                           display->alarm_list->seconds,
                            display->alarm_list->message);
-		    fflush(stdout);
-		    funlockfile(stdout);
+                    fflush(stdout);
+                    funlockfile(stdout);
 
                 }
             }
@@ -211,22 +214,29 @@ void * display_thread(void * args){
         pthread_mutex_lock(&display_mutex);
 
         //Set time
-	clock_gettime(CLOCK_REALTIME, &now);
-	
-	//Get the time the request was received
-    	localtime_r(&(now.tv_sec),&local_time);
-    	strftime(display->latest_request->time_retrieved,DATEFORMAT_SIZE,date_format_string,&local_time);
+        clock_gettime(CLOCK_REALTIME, &now);
 
-	//Get time alarm expires
-	localtime_r(&(display->alarm_list->time.tv_sec), &local_time);
-	strftime(expiration_str, DATEFORMAT_SIZE,date_format_string, &local_time);
+        //Get the time the request was received
+        err_check = localtime_r(&(now.tv_sec),&local_time);
+        if(err_check == NULL)
+            fprintf(stderr, "Error Acquiring local time\n");
+
+
+        strftime(display->latest_request->time_retrieved,DATEFORMAT_SIZE,date_format_string,&local_time);
+
+        //Get time alarm expires
+        err_check = localtime_r(&(display->alarm_list->time.tv_sec), &local_time);
+        if(err_check == NULL)
+            fprintf(stderr, "Error Acquiring local time\n");
+
+        strftime(expiration_str, DATEFORMAT_SIZE,date_format_string, &local_time);
 
         //Display the last request received.
         printf("Display thread %d: Received Alarm Request at time %s: number of seconds: %d message: %s, ExpiryTime is %s\n",
                display->thread_num,
-               display->latest_request->time_retrieved, 
-	       display->latest_request->seconds,
-	       display->latest_request->message,
+               display->latest_request->time_retrieved,
+               display->latest_request->seconds,
+               display->latest_request->message,
                expiration_str);
 
 
@@ -258,7 +268,7 @@ void *alarm_thread (void *arg)
     float nano_time;
     time_t sec_time;
     //String format time
-    struct tm alarm_local_time;
+    struct tm alarm_local_time, * err_check;
     char alarm_local_str[DATEFORMAT_SIZE];
 
 
@@ -307,17 +317,20 @@ void *alarm_thread (void *arg)
         if (status != 0)
             err_abort (status, "Lock mutex");
 
-	nano_time = (float)alarm->time.tv_nsec*1e-9;
-	sec_time = alarm->time.tv_sec;
+        nano_time = (float)alarm->time.tv_nsec*1e-9;
+        sec_time = alarm->time.tv_sec;
 
-	if(nano_time >= 0.5)
-		sec_time += 1;
+        if(nano_time >= 0.5)
+            sec_time += 1;
 
 
-	//Get the current time
-    	localtime_r(&(alarm->time.tv_sec),&alarm_local_time);
-    	strftime(alarm_local_str,DATEFORMAT_SIZE,date_format_string,&alarm_local_time);
-	
+        //Get the current time
+        err_check = localtime_r(&(alarm->time.tv_sec),&alarm_local_time);
+        if(err_check == NULL)
+            fprintf(stderr, "Error Acquiring local time\n");
+
+        strftime(alarm_local_str,DATEFORMAT_SIZE,date_format_string,&alarm_local_time);
+
 
 
         //If the time is even, send to display two, otherwise
@@ -327,20 +340,20 @@ void *alarm_thread (void *arg)
             appendToList(&(display_two->alarm_list), alarm);
             display_two->latest_request = alarm;
             printf("Alarm Thread passed Alarm Request to Display Thread %d at %s: number of seconds: %d message: %s\n",
-			    DISPLAY_TWO,
-			    alarm_local_str, 
-			    alarm->seconds,
-			    alarm->message);
+                   DISPLAY_TWO,
+                   alarm_local_str,
+                   alarm->seconds,
+                   alarm->message);
         }
         else {
             display_flag = DISPLAY_ONE;
             appendToList(&(display_one->alarm_list), alarm);
             display_one->latest_request = alarm;
             printf("Alarm Thread passed Alarm Request to Display Thread %d at %s: number of seconds: %d message: %s\n",
-			    DISPLAY_ONE,
-			    alarm_local_str, 
-			    alarm->seconds,
-			    alarm->message);
+                   DISPLAY_ONE,
+                   alarm_local_str,
+                   alarm->seconds,
+                   alarm->message);
         }
         //Get rid of the reference.
         alarm_list = NULL;
@@ -350,11 +363,6 @@ void *alarm_thread (void *arg)
         if (status != 0)
             err_abort (status, "Unlock display mutex");
 
-
-#ifdef DEBUG
-        printf ("[waiting: %d(%d)\"%s\"]\n", alarm->time.tv_sec,
-                sleep_time, alarm->message);
-#endif
 
         //Unlock the main thread after the transaction.
         status = pthread_mutex_unlock (&alarm_mutex);
@@ -368,9 +376,9 @@ int main (int argc, char *argv[])
 {
     int status;
     char line[128];
-    alarm_t *alarm, **last, *next;
+    alarm_t *alarm;
     pthread_t thread;
-    struct tm main_local_time;
+    struct tm main_local_time, * err_check;
     char main_local_str[DATEFORMAT_SIZE];
 
 
@@ -418,32 +426,29 @@ int main (int argc, char *argv[])
                 err_abort (status, "Lock mutex");
 
 
-	    //Allocate the time 
-	    clock_gettime(CLOCK_REALTIME, &(alarm->time));
-	    //Set alarm time
-	    alarm->time.tv_sec += alarm->seconds;
-	    //get the local time string
-	    localtime_r(&(alarm->time.tv_sec),&main_local_time);
-	    strftime(main_local_str,DATEFORMAT_SIZE,date_format_string,&main_local_time);
+            //Allocate the time
+            clock_gettime(CLOCK_REALTIME, &(alarm->time));
+            //Set alarm time
+            alarm->time.tv_sec += alarm->seconds;
+            //get the local time string
+            err_check = localtime_r(&(alarm->time.tv_sec),&main_local_time);
+            if(err_check == NULL)
+                fprintf(stderr, "Error Acquiring local time\n");
 
+            strftime(main_local_str,DATEFORMAT_SIZE,date_format_string,&main_local_time);
+
+            flockfile(stdout);
             //Output message to console
             printf("Main Thread Received Alarm Request at %s: %d seconds with message: %s\n",
                    main_local_str, alarm->seconds, alarm->message);
+            fflush(stdout);
+            funlockfile(stdout);
 
             //Set alarm list to the current alarm. NULL the next in sequence
             alarm_list = alarm;
             alarm_list->link = NULL;
             //Set flag for alarm thread to wait on the mutex
             alarm_flag = 1;
-
-
-#ifdef DEBUG
-            printf ("[list: ");
-            for (next = alarm_list; next != NULL; next = next->link)
-                printf ("%d(%d)[\"%s\"] ", next->time,
-                    next->time - time (NULL), next->message);
-            printf ("]\n");
-#endif
 
             //Unlock the alarm thread
             status = pthread_mutex_unlock (&alarm_mutex);

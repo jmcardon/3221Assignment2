@@ -11,6 +11,10 @@ default: My_Alarm
 My_Alarm: $(OBJECTS)
 	cc $(OBJECTS) -o $@ -lrt -lpthread
 
+test:
+	./My_Alarm >> Test_output.txt 2>> Test_output.txt
+
+
 clean: 
 	-rm -f $(OBJECTS)
 	-rm -f My_Alarm
